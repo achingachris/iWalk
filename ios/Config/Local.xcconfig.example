@@ -1,0 +1,13 @@
+// Copy to Local.xcconfig (git-ignored) and fill in.
+
+// Your Personal Team ID: Xcode > Settings > Accounts, or the OU field of your
+// "Apple Development" certificate.
+DEVELOPMENT_TEAM = ABCDE12345
+
+// Pick once and never change it: free accounts get 10 App IDs per 7 days.
+// Produces <prefix>.iwalk, <prefix>.iwalk.watchkitapp, <prefix>.iwalk.widgets
+BUNDLE_PREFIX = com.yourname
+
+// "//" starts a comment in xcconfig, so keep the $() between the slashes.
+IWALK_BASE_URL = https:/$()/203.0.113.10.sslip.io
+IWALK_API_KEY = paste-the-value-of-IWALK_KEY-from-server/.env

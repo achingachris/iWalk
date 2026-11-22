@@ -1,0 +1,12 @@
+// Shared build settings for every iWalk target.
+// Defaults come first; Local.xcconfig (git-ignored) overrides them.
+
+DEVELOPMENT_TEAM =
+BUNDLE_PREFIX = com.example
+
+// Valhalla server behind Caddy. Leave empty to plan with Apple walking directions.
+// xcconfig treats "//" as a comment, so write URLs as https:/$()/host
+IWALK_BASE_URL =
+IWALK_API_KEY =
+
+#include? "Local.xcconfig"
