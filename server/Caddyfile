@@ -1,0 +1,22 @@
+# iWalk: HTTPS front door for Valhalla.
+# IWALK_DOMAIN and IWALK_KEY come from .env (see docker-compose.yml).
+# Caddy gets and renews the Let's Encrypt certificate for IWALK_DOMAIN by itself.
+
+{$IWALK_DOMAIN} {
+	encode zstd gzip
+
+	# Only requests that carry the shared key reach Valhalla.
+	@authed header X-iWalk-Key {$IWALK_KEY}
+
+	handle @authed {
+		reverse_proxy valhalla:8002 {
+			# Valhalla has no use for the key; don't pass it on.
+			header_up -X-iWalk-Key
+		}
+	}
+
+	# Everything else: no key, wrong key, or any other request.
+	handle {
+		respond 401
+	}
+}

@@ -1,0 +1,16 @@
+{
+  "locations": [
+    { "lat": -4.0247, "lon": 39.7262, "type": "break" },
+    { "lat": -4.0190, "lon": 39.7230, "type": "break" }
+  ],
+  "costing": "pedestrian",
+  "costing_options": {
+    "pedestrian": {
+      "max_hiking_difficulty": 4,
+      "use_tracks": 1.0,
+      "use_hills": 0.8
+    }
+  },
+  "units": "kilometers",
+  "elevation_interval": 30
+}

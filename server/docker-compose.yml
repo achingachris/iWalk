@@ -1,0 +1,60 @@
+# iWalk routing server: Valhalla behind Caddy (automatic HTTPS + shared-key check).
+# Runbook: README.md in this folder. Run every command from this folder on the VPS.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  valhalla:
+    # nilsnolde/docker-valhalla was archived in March 2026; this is its successor.
+    image: ghcr.io/valhalla/valhalla-scripted:latest
+    restart: unless-stopped
+    environment:
+      # Kenya extract from Geofabrik. To route on a Mombasa clip instead, remove this
+      # line and put the clipped .osm.pbf in ./custom_files (README, "Maintenance").
+      tile_urls: "https://download.geofabrik.de/africa/kenya-latest.osm.pbf"
+      build_elevation: "True"
+      serve_tiles: "True"
+      use_tiles_ignore_pbf: "True"
+      # Set to "True" for one restart to rebuild the tiles, then back to "False".
+      force_rebuild: "False"
+      build_admins: "True"
+      build_time_zones: "True"
+      build_tar: "True"
+    volumes:
+      # PBF, routing tiles and SRTM elevation tiles all live here (git-ignored).
+      - ./custom_files:/custom_files
+    # Reachable only by Caddy on the compose network. Never publish 8002:
+    # Docker's published ports bypass ufw.
+    expose:
+      - "8002"
+    logging: *default-logging
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - valhalla
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    env_file: .env
+    environment:
+      # Compose reads .env for these too, so `docker compose config` and `up` stop
+      # with an error if either value is missing or empty. An empty IWALK_KEY would
+      # turn the Caddyfile matcher into "header present", which accepts any key.
+      IWALK_DOMAIN: ${IWALK_DOMAIN:?set IWALK_DOMAIN in .env}
+      IWALK_KEY: ${IWALK_KEY:?set IWALK_KEY in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging: *default-logging
+
+volumes:
+  caddy_data:
+  caddy_config:

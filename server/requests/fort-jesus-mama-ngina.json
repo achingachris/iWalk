@@ -1,0 +1,9 @@
+{
+  "locations": [
+    { "lat": -4.0629, "lon": 39.6797, "type": "break" },
+    { "lat": -4.0715, "lon": 39.6741, "type": "break" }
+  ],
+  "costing": "pedestrian",
+  "units": "kilometers",
+  "elevation_interval": 30
+}
