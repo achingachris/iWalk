@@ -50,11 +50,13 @@ private struct PhoneTrackingView: View {
                         .foregroundStyle(.red)
                 }
             }
-            .overlay(alignment: .topTrailing) {
+            // Bottom corner, so it never covers the off-route banner at the top.
+            .overlay(alignment: .bottomTrailing) {
                 Button(plainBackground ? "Map" : "Plain", systemImage: plainBackground ? "map" : "scribble") {
                     plainBackground.toggle()
                 }
                 .buttonStyle(.bordered)
+                .background(.regularMaterial, in: Capsule())
                 .padding()
             }
 
