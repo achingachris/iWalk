@@ -1,8 +1,44 @@
+<img src="docs/screenshots/icon.png" width="96" alt="iWalk app icon">
+
 # iWalk
 
 Plan a walk, hike or run on your iPhone while online, then follow it, record it and sync it with **no internet**, on the iPhone, the Apple Watch, or both. Workouts are saved to Apple Health and appear in Fitness with their route map. Route planning uses a self-hosted [Valhalla](https://github.com/valhalla/valhalla) server built from OpenStreetMap data for Kenya.
 
 **Status:** prototype, built and field-tested in Mombasa with a free Apple developer account.
+
+## Screenshots
+
+Demo routes around Fort Jesus, Old Town and Mama Ngina Drive in Mombasa.
+
+**Plan while online**
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/plan.png" width="240" alt="Planning a 1.93 km walking loop through Old Town with distance, time, climb and an elevation chart"><br><sub>Plan a walk, hike or run</sub></td>
+    <td align="center"><img src="docs/screenshots/saved-routes-map.png" width="240" alt="Two saved routes drawn as dashed purple lines on a map of Mombasa"><br><sub>Saved routes on the map</sub></td>
+    <td align="center"><img src="docs/screenshots/route-detail.png" width="240" alt="Route details with elevation profile and Start on Apple Watch and Start on iPhone buttons"><br><sub>Start on Apple Watch or iPhone</sub></td>
+  </tr>
+</table>
+
+**Follow it offline**
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/live-walk.png" width="240" alt="Live walk with the planned route in grey and the walked track in orange, distance, pace and remaining distance"><br><sub>Live tracking</sub></td>
+    <td align="center"><img src="docs/screenshots/live-activity.png" width="240" alt="Lock screen Live Activity showing an off-route warning, distance, pace and distance left"><br><sub>Live Activity with off-route alert</sub></td>
+    <td align="center"><img src="docs/screenshots/route-review.png" width="240" alt="After a run that took a different path: the saved route and walked path with Update, Save as new route and Keep original"><br><sub>Took a different path? Update the route</sub></td>
+  </tr>
+</table>
+
+**Apple Watch**
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/watch-routes.png" width="200" alt="Watch app listing two synced routes"><br><sub>Synced routes</sub></td>
+    <td align="center"><img src="docs/screenshots/watch-workout.png" width="200" alt="Watch workout with time, distance, heart rate and distance left"><br><sub>Workout with heart rate</sub></td>
+    <td align="center"><img src="docs/screenshots/watch-route.png" width="200" alt="Watch route view with the planned route, walked track and current position, no map tiles needed"><br><sub>Route view, no map tiles needed</sub></td>
+  </tr>
+</table>
 
 ## Features
 
