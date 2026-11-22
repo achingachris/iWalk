@@ -29,7 +29,6 @@ final class MirroredWorkout: NSObject {
     /// Set at launch. iOS can launch the app in the background to deliver the session.
     func install() {
         health.workoutSessionMirroringStartHandler = { @Sendable [weak self] session in
-            nonisolated(unsafe) let session = session
             Task { @MainActor in self?.attach(session) }
         }
     }
