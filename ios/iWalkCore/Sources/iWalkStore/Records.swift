@@ -80,6 +80,10 @@ public final class SessionRecord {
     public var healthKitUUID: UUID?
     public var sourceRaw: String
     @Attribute(.externalStorage) public var trackData: Data
+    /// Route review state (`RouteReview`); nil until the walk has been compared with its route.
+    public var routeReviewRaw: String? = nil
+    /// The walked path snapped to OSM paths, offered as a replacement for the saved route.
+    @Attribute(.externalStorage) public var routeProposalData: Data? = nil
 
     public init(_ dto: SessionDTO) {
         id = dto.id
@@ -102,6 +106,30 @@ public final class SessionRecord {
     public var trackPoints: [TrackPoint] {
         (try? JSONCoding.decoder.decode([TrackPoint].self, from: trackData)) ?? []
     }
+
+    public var routeReview: RouteReview? {
+        get { routeReviewRaw.flatMap(RouteReview.init(rawValue:)) }
+        set { routeReviewRaw = newValue?.rawValue }
+    }
+
+    public var routeProposal: RouteDTO? {
+        get { routeProposalData.flatMap { try? JSONCoding.decoder.decode(RouteDTO.self, from: $0) } }
+        set { routeProposalData = newValue.flatMap { try? JSONCoding.encoder.encode($0) } }
+    }
+}
+
+/// Whether a finished walk matched its saved route.
+public enum RouteReview: String, Sendable {
+    /// Walked the route (or close enough).
+    case matched
+    /// Took a different path; a snapped replacement is waiting for the user.
+    case pending
+    /// The user updated the route or saved the walked path as a new route.
+    case applied
+    /// The user kept the original route (or the route no longer exists, or the walk was too short).
+    case dismissed
+    /// A walk without a planned route was saved as a new route.
+    case created
 }
 
 public enum iWalkSchema {

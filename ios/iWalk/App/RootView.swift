@@ -1,11 +1,21 @@
+import SwiftData
 import SwiftUI
 import iWalkCore
+import iWalkStore
 
 struct RootView: View {
     @Environment(AppServices.self) private var services
     @Environment(TrackingSession.self) private var tracking
     @Environment(MirroredWorkout.self) private var mirror
+    @Environment(NetworkMonitor.self) private var network
+    @Environment(RouteReviewer.self) private var reviewer
     @Environment(\.scenePhase) private var scenePhase
+
+    /// Finished walks not yet compared with their route (or saved as a new route).
+    @Query(filter: #Predicate<SessionRecord> { $0.routeReviewRaw == nil })
+    private var unreviewed: [SessionRecord]
+    @Query(filter: #Predicate<SessionRecord> { $0.routeReviewRaw == "pending" })
+    private var pendingReviews: [SessionRecord]
 
     var body: some View {
         @Bindable var services = services
@@ -19,6 +29,7 @@ struct RootView: View {
             Tab("History", systemImage: "clock.arrow.circlepath", value: AppServices.Tab.history) {
                 HistoryView()
             }
+            .badge(pendingReviews.count)
             Tab("Sync", systemImage: "applewatch.radiowaves.left.and.right", value: AppServices.Tab.sync) {
                 SyncDebugView()
             }
@@ -27,8 +38,18 @@ struct RootView: View {
             LiveWorkoutView()
         }
         .task { await services.requestHealthAuthorization() }
+        // Check walks against their routes on launch, when a new walk arrives, and when back online.
+        .task(id: ReviewTrigger(unreviewed: unreviewed.count, online: network.isOnline)) {
+            guard !unreviewed.isEmpty else { return }
+            await reviewer.reviewPending()
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { mirror.startLiveActivityIfPossible() }
         }
+    }
+
+    private struct ReviewTrigger: Equatable {
+        let unreviewed: Int
+        let online: Bool
     }
 }

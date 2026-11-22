@@ -71,6 +71,22 @@ final class PhoneSync: NSObject {
         }
     }
 
+    /// True when a Watch with iWalk installed is paired, so "Start on Apple Watch" can work.
+    var canStartOnWatch: Bool {
+        activationState == .activated && isPaired && isWatchAppInstalled
+    }
+
+    /// Tells the Watch which route to follow. Sent as a live message when the Watch is reachable
+    /// and always queued as user info as well; the Watch ignores duplicates and stale requests.
+    func requestWatchStart(_ request: WatchStartRequest) {
+        let session = WCSession.default
+        guard WCSession.isSupported(), session.activationState == .activated else { return }
+        if session.isReachable {
+            session.sendMessage(request.userInfo, replyHandler: nil, errorHandler: nil)
+        }
+        session.transferUserInfo(request.userInfo)
+    }
+
     func refresh() {
         guard WCSession.isSupported() else { return }
         let s = WCSession.default

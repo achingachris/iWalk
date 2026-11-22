@@ -81,18 +81,47 @@ public struct ValhallaClient: RoutePlanner {
         return Self.join(response.trip, elevationIntervalM: elevationIntervalM)
     }
 
-    /// Snap a recorded track to OSM paths (`/trace_route`). Optional, online only.
-    public func snap(track: [Coordinate], activity: ActivityKind) async throws -> [Coordinate] {
-        guard track.count >= 2 else { return track }
+    /// Snap a recorded track to OSM paths (`/trace_route`), with distance, time and elevation,
+    /// so it can replace or become a saved route. Online only.
+    public func snap(track: [Coordinate], activity: ActivityKind) async throws -> PlannedRoute {
+        let shape = Geo.thin(track)
+        guard shape.count >= 2 else { throw PlanningError.notEnoughWaypoints }
         let body = TraceRequest(
-            shape: track.map { .init(lat: $0.latitude, lon: $0.longitude, type: nil) },
+            shape: shape.map { .init(lat: $0.latitude, lon: $0.longitude, type: nil) },
             costing: "pedestrian",
             costing_options: ["pedestrian": activity.pedestrianCostingOptions],
             shape_match: "map_snap",
+            // Phone GPS in narrow streets can sit 20-50 m off the mapped path.
+            trace_options: .init(search_radius: 100, gps_accuracy: 20),
+            units: "kilometers",
+            elevation_interval: elevationIntervalM,
             directions_type: "none"
         )
         let response: RouteResponse = try await post("trace_route", body: body)
-        return Self.join(response.trip, elevationIntervalM: nil).coords
+        let snapped = Self.join(response.trip, elevationIntervalM: elevationIntervalM)
+
+        // If matching went wrong (paths missing from OSM, a noisy track), the snapped length is
+        // far from what was walked. Then keep the recorded path itself rather than a bad match.
+        let walkedKm = Geo.length(of: shape) / 1000
+        guard walkedKm > 0.1, !(0.6...1.6).contains(snapped.distanceKm / walkedKm) else { return snapped }
+        let heights = try? await heights(along: shape)
+        return PlannedRoute(
+            coords: shape, distanceKm: walkedKm, durationMin: walkedKm / activity.nominalSpeedKmh * 60,
+            elevation: heights, elevationIntervalM: heights == nil ? nil : elevationIntervalM, source: .valhalla
+        )
+    }
+
+    /// Elevation in metres every `elevationIntervalM` along a path (`/height`).
+    public func heights(along coords: [Coordinate]) async throws -> [Double] {
+        let body = HeightRequest(shape: coords.map { .init(lat: $0.latitude, lon: $0.longitude, type: nil) },
+                                 resample_distance: elevationIntervalM)
+        let response: HeightResponse = try await post("height", body: body)
+        // Gaps in the elevation data come back as null; carry the previous value over them.
+        var last = response.height.compactMap { $0 }.first ?? 0
+        return response.height.map { h in
+            if let h { last = h }
+            return last
+        }
     }
 
     static func join(_ trip: RouteResponse.Trip, elevationIntervalM: Double?) -> PlannedRoute {
@@ -168,7 +197,24 @@ public struct ValhallaClient: RoutePlanner {
         let costing: String
         let costing_options: [String: [String: Double]]
         let shape_match: String
+        let trace_options: TraceOptions
+        let units: String
+        let elevation_interval: Double
         let directions_type: String
+    }
+
+    struct TraceOptions: Encodable {
+        let search_radius: Double
+        let gps_accuracy: Double
+    }
+
+    struct HeightRequest: Encodable {
+        let shape: [Location]
+        let resample_distance: Double
+    }
+
+    struct HeightResponse: Decodable {
+        let height: [Double?]
     }
 
     struct RouteResponse: Decodable {

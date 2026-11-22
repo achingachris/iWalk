@@ -18,11 +18,49 @@ public enum SyncKey {
     public static let version = "version"
     public static let sessionId = "sessionId"
     public static let ackRouteVersion = "ackRouteVersion"
+    public static let startRouteId = "startRouteId"
+    public static let startActivity = "startActivity"
+    public static let startRequestedAt = "startRequestedAt"
 
     public enum Kind {
         public static let routeBundle = "routeBundle"
         public static let session = "session"
     }
+}
+
+/// "Start this route on the Watch", sent by the iPhone just before it launches the Watch app
+/// with `HKHealthStore.startWatchApp`. The workout configuration only carries the activity type,
+/// so this tells the Watch which route to follow. Sent over WatchConnectivity (no internet).
+public struct WatchStartRequest: Sendable, Equatable {
+    public var routeId: UUID?
+    public var activity: ActivityKind
+    public var requestedAt: Date
+
+    /// Requests older than this are ignored, so a late delivery never starts a stale route.
+    public static let maxAge: TimeInterval = 120
+
+    public init(routeId: UUID?, activity: ActivityKind, requestedAt: Date = .now) {
+        self.routeId = routeId
+        self.activity = activity
+        self.requestedAt = requestedAt
+    }
+
+    public init?(userInfo: [String: Any]) {
+        guard let raw = userInfo[SyncKey.startActivity] as? String, let activity = ActivityKind(rawValue: raw),
+              let at = userInfo[SyncKey.startRequestedAt] as? Double else { return nil }
+        self.activity = activity
+        self.requestedAt = Date(timeIntervalSince1970: at)
+        self.routeId = (userInfo[SyncKey.startRouteId] as? String).flatMap(UUID.init(uuidString:))
+    }
+
+    public var userInfo: [String: Any] {
+        var info: [String: Any] = [SyncKey.startActivity: activity.rawValue,
+                                   SyncKey.startRequestedAt: requestedAt.timeIntervalSince1970]
+        if let routeId { info[SyncKey.startRouteId] = routeId.uuidString }
+        return info
+    }
+
+    public var isFresh: Bool { Date.now.timeIntervalSince(requestedAt) < Self.maxAge }
 }
 
 /// Live update the Watch sends to the iPhone over the mirrored workout session

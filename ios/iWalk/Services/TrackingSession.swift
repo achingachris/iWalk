@@ -23,6 +23,7 @@ final class TrackingSession {
     private(set) var isOffRoute = false
     private(set) var lastAccuracyM: Double?
     private(set) var lastError: String?
+    private var latestHeartRate: (bpm: Double, at: Date)?
 
     weak var mirror: MirroredWorkout?
 
@@ -32,6 +33,7 @@ final class TrackingSession {
     private let locationManager = CLLocationManager()
     private var backgroundSession: CLBackgroundActivitySession?
     private var updatesTask: Task<Void, Never>?
+    private var heartRateTask: Task<Void, Never>?
     private var geometry: RouteGeometry?
     private var detector = OffRouteDetector()
     private var recorder: PhoneWorkoutRecorder?
@@ -61,6 +63,13 @@ final class TrackingSession {
         return last.timestamp.timeIntervalSince(oldest.timestamp) / (dist / 1000)
     }
 
+    /// Latest heart rate another device wrote to Health during this workout (the iPhone has no
+    /// sensor of its own). Nil when there is none, or the last reading is over a minute old.
+    var heartRate: Double? {
+        guard let latestHeartRate, Date.now.timeIntervalSince(latestHeartRate.at) < 60 else { return nil }
+        return latestHeartRate.bpm
+    }
+
     /// Call from a button tap: the background session and Live Activity must start on screen.
     func start(route: RouteDTO?, activity: ActivityKind) {
         guard state == .idle else { return }
@@ -77,6 +86,7 @@ final class TrackingSession {
         isOffRoute = false
         track = TrackAccumulator(maxAccuracyM: 30)
         pendingRouteLocations = []
+        latestHeartRate = nil
         let start = Date.now
         startedAt = start
         state = .running
@@ -91,6 +101,13 @@ final class TrackingSession {
 
         liveActivity.start(routeName: route?.name ?? "\(self.activity.title)", activity: self.activity,
                            state: contentState)
+
+        heartRateTask = Task { [weak self, health] in
+            for await sample in HealthVitals.heartRateUpdates(from: health, since: start) {
+                guard let self, !Task.isCancelled else { break }
+                self.latestHeartRate = sample
+            }
+        }
 
         updatesTask = Task { [weak self] in
             do {
@@ -142,7 +159,7 @@ final class TrackingSession {
 
     var contentState: RouteActivityAttributes.ContentState {
         .init(startedAt: startedAt ?? .now, distanceKm: distanceKm, paceSecPerKm: currentPaceSecPerKm ?? averagePaceSecPerKm,
-              remainingKm: remainingKm, heartRate: nil, offRoute: isOffRoute, fromWatch: false)
+              remainingKm: remainingKm, heartRate: heartRate, offRoute: isOffRoute, fromWatch: false)
     }
 
     func stop() async {
@@ -150,6 +167,8 @@ final class TrackingSession {
         state = .saving
         updatesTask?.cancel()
         updatesTask = nil
+        heartRateTask?.cancel()
+        heartRateTask = nil
         backgroundSession?.invalidate()
         backgroundSession = nil
         flushRouteData()
@@ -157,15 +176,24 @@ final class TrackingSession {
         liveActivity.end(contentState)
 
         var healthUUID: UUID?
+        var vitals = HealthVitals()
         if let recorder, track.points.count >= 2 {
-            healthUUID = await recorder.finish(at: end, distanceM: track.distanceM)
+            if let saved = await recorder.finish(at: end, distanceM: track.distanceM) {
+                healthUUID = saved.uuid
+                vitals = saved.vitals
+            }
+            // Whatever the workout did not collect itself, take from Health for the same span.
+            if vitals.avgHR == nil || vitals.activeEnergyKcal == nil {
+                vitals = vitals.filling(from: await HealthVitals.read(from: health, start: startedAt, end: end))
+            }
         }
         recorder = nil
 
         if track.points.count >= 2 {
             let session = SessionDTO(
                 routeId: route?.id, routeName: route?.name, activity: activity, start: startedAt, end: end,
-                trackPoints: track.points, distanceKm: distanceKm, avgHR: nil, activeEnergyKcal: nil,
+                trackPoints: track.points, distanceKm: distanceKm, avgHR: vitals.avgHR,
+                activeEnergyKcal: vitals.activeEnergyKcal,
                 healthKitUUID: healthUUID, source: .phone
             )
             do {
@@ -179,6 +207,8 @@ final class TrackingSession {
 
     func discard() {
         updatesTask?.cancel()
+        heartRateTask?.cancel()
+        heartRateTask = nil
         backgroundSession?.invalidate()
         backgroundSession = nil
         liveActivity.end(nil)
@@ -195,18 +225,26 @@ final class TrackingSession {
         currentLocation = nil
         remainingKm = nil
         isOffRoute = false
+        latestHeartRate = nil
     }
 }
 
-/// Builds a Health workout (with its route) for a phone-recorded session.
+/// Builds a Health workout (with its route) for a phone-recorded session, so the walk, hike or
+/// run appears in Health and Fitness.
+/// - iOS 26+: a live `HKWorkoutSession` with `HKLiveWorkoutBuilder`, so it is a real
+///   in-progress workout on the iPhone (iOS 26 added workout sessions on iPhone).
+/// - iOS 18-25: an `HKWorkoutBuilder`; the workout is saved when you stop.
 final class PhoneWorkoutRecorder {
     private let health: HKHealthStore
-    private let builder: HKWorkoutBuilder
+    private let activity: ActivityKind
+    private var builder: HKWorkoutBuilder
+    private var session: HKWorkoutSession?
     private let routeBuilder: HKWorkoutRouteBuilder
     private var began = false
 
     init(health: HKHealthStore, activity: ActivityKind) {
         self.health = health
+        self.activity = activity
         builder = HKWorkoutBuilder(healthStore: health, configuration: activity.workoutConfiguration, device: .local())
         routeBuilder = HKWorkoutRouteBuilder(healthStore: health, device: .local())
     }
@@ -214,6 +252,15 @@ final class PhoneWorkoutRecorder {
     func begin(at date: Date) async {
         do {
             try await HealthTypes.requestAuthorization(health)
+            if #available(iOS 26.0, *) {
+                let configuration = activity.workoutConfiguration
+                let session = try HKWorkoutSession(healthStore: health, configuration: configuration)
+                let live = session.associatedWorkoutBuilder()
+                live.dataSource = HKLiveWorkoutDataSource(healthStore: health, workoutConfiguration: configuration)
+                self.session = session
+                builder = live
+                session.startActivity(with: date)
+            }
             try await builder.beginCollection(at: date)
             began = true
         } catch {
@@ -229,21 +276,29 @@ final class PhoneWorkoutRecorder {
         }
     }
 
-    /// Returns the UUID of the saved HKWorkout.
-    func finish(at end: Date, distanceM: Double) async -> UUID? {
+    /// Returns the UUID of the saved HKWorkout and the heart rate and energy it collected.
+    func finish(at end: Date, distanceM: Double) async -> (uuid: UUID, vitals: HealthVitals)? {
         guard began else { return nil }
         do {
-            let start = builder.startDate ?? end
-            let distance = HKQuantitySample(
-                type: HKQuantityType(.distanceWalkingRunning),
-                quantity: HKQuantity(unit: .meter(), doubleValue: distanceM),
-                start: start, end: end
-            )
-            try await builder.addSamples([distance])
+            if let session {
+                session.stopActivity(with: end)
+                session.end()
+            }
+            // A live builder may already have collected distance; only add ours if it has none.
+            let collected = builder.statistics(for: HKQuantityType(.distanceWalkingRunning))?
+                .sumQuantity()?.doubleValue(for: .meter()) ?? 0
+            if collected <= 0 {
+                let distance = HKQuantitySample(
+                    type: HKQuantityType(.distanceWalkingRunning),
+                    quantity: HKQuantity(unit: .meter(), doubleValue: distanceM),
+                    start: builder.startDate ?? end, end: end
+                )
+                try await builder.addSamples([distance])
+            }
             try await builder.endCollection(at: end)
             guard let workout = try await builder.finishWorkout() else { return nil }
             _ = try await routeBuilder.finishRoute(with: workout, metadata: nil)
-            return workout.uuid
+            return (workout.uuid, HealthVitals(workout: workout))
         } catch {
             print("Workout save failed: \(error)")
             return nil
@@ -251,6 +306,7 @@ final class PhoneWorkoutRecorder {
     }
 
     func discard() {
+        session?.end()
         builder.discardWorkout()
         routeBuilder.discard()
     }

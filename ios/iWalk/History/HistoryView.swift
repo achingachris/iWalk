@@ -29,7 +29,8 @@ struct HistoryView: View {
                             SessionRow(icon: s.activity.systemImage, title: s.routeName ?? s.activity.title,
                                        date: s.start, distanceKm: s.distanceKm,
                                        duration: s.end.timeIntervalSince(s.start),
-                                       badge: s.source == .watch ? "applewatch" : "iphone")
+                                       badge: s.source == .watch ? "applewatch" : "iphone",
+                                       note: s.routeReview == .pending ? "Different path from the route. Review" : nil)
                         }
                     }
                 }
@@ -73,6 +74,7 @@ private struct SessionRow: View {
     let distanceKm: Double
     let duration: TimeInterval
     let badge: String
+    var note: String? = nil
 
     var body: some View {
         HStack(spacing: 12) {
@@ -82,6 +84,11 @@ private struct SessionRow: View {
                 Text("\(date.formatted(date: .abbreviated, time: .shortened)) · \(Format.distance(km: distanceKm)) · \(Format.duration(duration))")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                if let note {
+                    Label(note, systemImage: "arrow.triangle.branch")
+                        .font(.caption.bold())
+                        .foregroundStyle(.orange)
+                }
             }
             Spacer()
             Image(systemName: badge).foregroundStyle(.secondary)
@@ -95,7 +102,21 @@ private struct SessionDetailView: View {
     @State private var snapping = false
     @State private var snapError: String?
     @Environment(NetworkMonitor.self) private var network
+    @Environment(AppServices.self) private var services
+    @Environment(RouteReviewer.self) private var reviewer
+    @Environment(\.modelContext) private var context
     @Query private var routes: [RouteRecord]
+
+    /// Heart rate and energy often reach Health after the walk ends (a Watch syncing its readings,
+    /// the iPhone's own energy estimate), so fill the gaps whenever the session is opened.
+    private func fillVitalsFromHealth() async {
+        guard session.avgHR == nil || session.activeEnergyKcal == nil else { return }
+        let vitals = await HealthVitals.read(from: services.health, start: session.start, end: session.end)
+        guard vitals.avgHR != nil || vitals.activeEnergyKcal != nil else { return }
+        session.avgHR = session.avgHR ?? vitals.avgHR
+        session.activeEnergyKcal = session.activeEnergyKcal ?? vitals.activeEnergyKcal
+        try? context.save()
+    }
 
     var body: some View {
         let track = session.trackPoints.map(\.coordinate)
@@ -109,15 +130,17 @@ private struct SessionDetailView: View {
                     Stat(title: "Distance", value: Format.distance(km: session.distanceKm))
                     Stat(title: "Time", value: Format.duration(session.end.timeIntervalSince(session.start)))
                     Stat(title: "Avg HR", value: session.avgHR.map { "\(Int($0))" } ?? "—")
+                    Stat(title: "Calories", value: session.activeEnergyKcal.map { "\(Int($0.rounded()))" } ?? "—")
                 }
             }
-            if let valhalla = AppConfig.makeValhalla() {
+            RouteReviewSection(session: session, original: planned, track: track)
+            if session.routeId == nil, let valhalla = AppConfig.makeValhalla() {
                 Section {
                     Button(snapping ? "Snapping…" : "Snap track to paths", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
                         snapping = true
                         Task {
                             do {
-                                snapped = try await valhalla.snap(track: track, activity: session.activity)
+                                snapped = try await valhalla.snap(track: track, activity: session.activity).coords
                             } catch {
                                 snapError = error.localizedDescription
                             }
@@ -132,5 +155,75 @@ private struct SessionDetailView: View {
         }
         .navigationTitle(session.routeName ?? session.activity.title)
         .navigationBarTitleDisplayMode(.inline)
+        .task { await fillVitalsFromHealth() }
+    }
+}
+
+/// Shown on a walk that followed a saved route: whether it matched, and when it didn't,
+/// the walked path (snapped to OSM paths) with a choice to update the route.
+private struct RouteReviewSection: View {
+    let session: SessionRecord
+    let original: [Coordinate]
+    let track: [Coordinate]
+    @Environment(RouteReviewer.self) private var reviewer
+    @Environment(NetworkMonitor.self) private var network
+    @State private var confirmingUpdate = false
+
+    var body: some View {
+        if session.routeId == nil, session.routeReview == nil, Geo.length(of: track) >= RouteReviewer.minimumNewRouteM {
+            Section {
+                Label(network.isOnline ? "Saving this walk as a route…" : "This walk will be saved as a route, matched to the map, when you're online.",
+                      systemImage: "map")
+                    .font(.subheadline)
+                if let error = reviewer.lastError { Text(error).font(.caption).foregroundStyle(.red) }
+            }
+        } else if session.routeId != nil {
+            switch session.routeReview {
+            case .created:
+                Section { Label("Saved as a route: “\(session.routeName ?? "")”", systemImage: "checkmark.circle").foregroundStyle(.green) }
+            case .pending:
+                if let proposal = session.routeProposal { pendingSection(proposal) }
+            case .applied:
+                Section { Label("Route updated from this walk", systemImage: "checkmark.circle").foregroundStyle(.green) }
+            case .matched:
+                Section { Label("You followed the saved route", systemImage: "checkmark.circle").foregroundStyle(.secondary) }
+            case .dismissed:
+                EmptyView()
+            case nil:
+                if !original.isEmpty,
+                   RouteComparison.compare(track: track, planned: RouteGeometry(original)).differs {
+                    Section {
+                        Label(network.isOnline ? "Checking the path you walked…" : "You took a different path. iWalk will match it to the map and offer to update the route when you're online.",
+                              systemImage: "arrow.triangle.branch")
+                            .font(.subheadline)
+                        if let error = reviewer.lastError { Text(error).font(.caption).foregroundStyle(.red) }
+                    }
+                }
+            }
+        }
+    }
+
+    private func pendingSection(_ proposal: RouteDTO) -> some View {
+        Section {
+            RouteShapeView(planned: original, track: proposal.coords)
+                .frame(height: 220)
+                .listRowInsets(EdgeInsets())
+            HStack {
+                Stat(title: "Saved route", value: Format.distance(km: Geo.length(of: original) / 1000))
+                Stat(title: "Walked path", value: Format.distance(km: proposal.distanceKm))
+                Stat(title: "Climb", value: proposal.elevGainM.map { "\(Int($0.rounded())) m" } ?? "—")
+            }
+            Button("Update “\(proposal.name)”", systemImage: "arrow.triangle.2.circlepath") { confirmingUpdate = true }
+            Button("Save as new route", systemImage: "plus.square.on.square") { reviewer.decide(.saveAsNewRoute, for: session) }
+            Button("Keep original route", systemImage: "xmark", role: .cancel) { reviewer.decide(.keepOriginal, for: session) }
+        } header: {
+            Text("You took a different path")
+        } footer: {
+            Text("Grey is the saved route, orange is the path you walked, matched to OpenStreetMap paths. Updating replaces the saved route on your iPhone and Watch.")
+        }
+        .confirmationDialog("Replace “\(proposal.name)” with the path you walked?", isPresented: $confirmingUpdate, titleVisibility: .visible) {
+            Button("Update route") { reviewer.decide(.updateRoute, for: session) }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 }

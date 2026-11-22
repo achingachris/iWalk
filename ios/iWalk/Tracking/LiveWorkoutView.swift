@@ -68,6 +68,9 @@ private struct PhoneTrackingView: View {
                     Stat(title: "Distance", value: Format.distance(km: tracking.distanceKm))
                     Stat(title: "Pace", value: Format.pace(secondsPerKm: tracking.currentPaceSecPerKm ?? tracking.averagePaceSecPerKm))
                     Stat(title: "Remaining", value: tracking.remainingKm.map { Format.distance(km: $0) } ?? "—")
+                    if let heartRate = tracking.heartRate {
+                        Stat(title: "Heart rate", value: "\(Int(heartRate)) bpm")
+                    }
                 }
                 if let acc = tracking.lastAccuracyM {
                     Text("GPS ±\(Int(acc)) m").font(.caption).foregroundStyle(acc > 30 ? .red : .secondary)

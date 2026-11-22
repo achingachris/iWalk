@@ -7,10 +7,18 @@ struct RoutesView: View {
     @Query(sort: \RouteRecord.updatedAt, order: .reverse) private var routes: [RouteRecord]
     @Environment(\.modelContext) private var context
     @Environment(PhoneSync.self) private var sync
+    @Environment(AppServices.self) private var services
+    @Environment(TrackingSession.self) private var tracking
+    @Environment(MirroredWorkout.self) private var mirror
+    @State private var startingOnWatch = false
+    @State private var startMessage: String?
 
     var body: some View {
         NavigationStack {
             List {
+                if let startMessage {
+                    Text(startMessage).font(.footnote).foregroundStyle(.orange)
+                }
                 ForEach(routes) { route in
                     NavigationLink(value: route.id) {
                         RouteRow(route: route)
@@ -21,16 +29,58 @@ struct RoutesView: View {
             .overlay {
                 if routes.isEmpty {
                     ContentUnavailableView("No saved routes", systemImage: "map",
-                                           description: Text("Plan a route while online, then save it."))
+                                           description: Text("Plan a route while online, or tap Start for a walk without one. It's saved as a route when you finish."))
                 }
             }
             .navigationTitle("Routes")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    startMenu
+                }
+            }
             .navigationDestination(for: UUID.self) { id in
                 if let route = routes.first(where: { $0.id == id }) {
                     RouteDetailView(route: route)
                 }
             }
         }
+    }
+
+    /// Start a walk, hike or run without a planned route. When it ends (and the phone is online)
+    /// it is saved as a new route.
+    private var startMenu: some View {
+        Menu {
+            if sync.canStartOnWatch {
+                Section("On Apple Watch") {
+                    ForEach(ActivityKind.allCases) { kind in
+                        Button(kind.title, systemImage: kind.systemImage) {
+                            startMessage = nil
+                            startingOnWatch = true
+                            Task {
+                                startMessage = await services.startOnWatch(activity: kind, route: nil)
+                                startingOnWatch = false
+                            }
+                        }
+                    }
+                }
+            }
+            Section("On iPhone") {
+                ForEach(ActivityKind.allCases) { kind in
+                    Button(kind.title, systemImage: kind.systemImage) {
+                        startMessage = nil
+                        tracking.start(route: nil, activity: kind)
+                    }
+                }
+            }
+        } label: {
+            if startingOnWatch {
+                ProgressView()
+            } else {
+                Label("Start", systemImage: "play.fill")
+            }
+        }
+        .disabled(tracking.state != .idle || mirror.isActive || startingOnWatch)
+        .accessibilityLabel("Start a workout without a route")
     }
 
     private func delete(at offsets: IndexSet) {
@@ -70,6 +120,24 @@ struct RouteDetailView: View {
     @State private var renaming = false
     @State private var newName = ""
     @State private var gpxURL: URL?
+    @State private var watchStart: WatchStartState = .idle
+
+    enum WatchStartState: Equatable { case idle, starting, failed(String) }
+
+    private var busy: Bool {
+        tracking.state != .idle || mirror.isActive || watchStart == .starting
+    }
+
+    /// Launches the Watch app into this route's workout. The Watch records it (so it lands in
+    /// Fitness with heart rate) and mirrors it back; the phone does not record ("one recorder").
+    private func startOnWatch(_ route: RouteDTO) async {
+        watchStart = .starting
+        if let message = await services.startOnWatch(activity: route.activity, route: route) {
+            watchStart = .failed(message)
+        } else {
+            watchStart = .idle
+        }
+    }
 
     var body: some View {
         let dto = route.dto
@@ -90,17 +158,35 @@ struct RouteDetailView: View {
             }
 
             Section {
-                Button("Start on iPhone", systemImage: "play.fill") {
+                if sync.canStartOnWatch {
+                    Button {
+                        Task { await startOnWatch(dto) }
+                    } label: {
+                        HStack {
+                            Label("Start on Apple Watch", systemImage: "applewatch")
+                            Spacer()
+                            if watchStart == .starting { ProgressView() }
+                        }
+                    }
+                    .disabled(busy)
+                }
+                Button("Start on iPhone", systemImage: "iphone") {
+                    watchStart = .idle
                     tracking.start(route: dto, activity: dto.activity)
                 }
-                .disabled(tracking.state != .idle || mirror.isActive)
+                .disabled(busy)
+                if case .failed(let message) = watchStart {
+                    Text(message).font(.footnote).foregroundStyle(.orange)
+                }
                 if mirror.isActive {
                     Text("A Watch workout is running. The Watch records; the phone shows it.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             } footer: {
-                Text("Wearing your Watch? Start the route on the Watch instead. The phone will show it live.")
+                Text(sync.canStartOnWatch
+                     ? "Both save a \(dto.activity.title.lowercased()) workout with its route to Health and Fitness. Wearing your Watch? Start there: it records heart rate and the phone shows it live."
+                     : "Saves a \(dto.activity.title.lowercased()) workout with its route to Health and Fitness.")
             }
 
             Section {

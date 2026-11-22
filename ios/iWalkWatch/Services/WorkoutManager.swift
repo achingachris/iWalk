@@ -26,6 +26,10 @@ final class WorkoutManager: NSObject {
 
     /// Called with the finished session so it can be queued for the phone.
     var onFinished: ((SessionDTO) -> Void)?
+    /// Looks up a synced route by id (set by WatchServices).
+    var routeLookup: ((UUID) -> RouteDTO?)?
+    /// The latest "start this route" request from the iPhone, waiting for the workout configuration.
+    private var pendingStart: WatchStartRequest?
 
     private let health = HKHealthStore()
     private let locationManager = CLLocationManager()
@@ -99,6 +103,41 @@ final class WorkoutManager: NSObject {
             lastError = "Could not start the workout: \(error.localizedDescription)"
             phase = .idle
         }
+    }
+
+    // MARK: - Started from the iPhone
+
+    /// The iPhone launched the app with a workout configuration ("Start on Apple Watch").
+    func startFromPhone(_ configuration: HKWorkoutConfiguration) async {
+        let kind = ActivityKind(workoutActivityType: configuration.activityType)
+        var route: RouteDTO?
+        if let request = pendingStart, request.isFresh, request.activity == kind, let id = request.routeId {
+            route = routeLookup?(id)
+        }
+        pendingStart = nil
+        await start(activity: kind, route: route)
+    }
+
+    /// The route id can arrive just before or just after the configuration; handle both orders.
+    func receive(_ request: WatchStartRequest) {
+        guard request.isFresh else { return }
+        switch phase {
+        case .running, .paused:
+            if route == nil, request.activity == activity, let id = request.routeId, let found = routeLookup?(id) {
+                follow(found)
+            }
+        case .idle, .summary, .ending:
+            pendingStart = request
+        }
+    }
+
+    private func follow(_ route: RouteDTO) {
+        self.route = route
+        geometry = RouteGeometry(route.coords)
+        remainingKm = route.distanceKm
+        detector.reset()
+        isOffRoute = false
+        sendMirrorUpdate(force: true)
     }
 
     func pause() { session?.pause() }

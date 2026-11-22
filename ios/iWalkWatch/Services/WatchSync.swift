@@ -23,6 +23,9 @@ final class WatchSync: NSObject {
 
     private let context: ModelContext
 
+    /// Called when the iPhone asks the Watch to start a route.
+    var onStartRequest: ((WatchStartRequest) -> Void)?
+
     init(context: ModelContext) {
         self.context = context
         appliedVersion = UserDefaults.standard.integer(forKey: "appliedRouteVersion")
@@ -127,6 +130,16 @@ extension WatchSync: WCSessionDelegate {
         guard file.metadata?[SyncKey.kind] as? String == SyncKey.Kind.routeBundle,
               let data = try? Data(contentsOf: file.fileURL) else { return }
         Task { @MainActor in self.received(routeBundle: data) }
+    }
+
+    nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        guard let request = WatchStartRequest(userInfo: message) else { return }
+        Task { @MainActor in self.onStartRequest?(request) }
+    }
+
+    nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        guard let request = WatchStartRequest(userInfo: userInfo) else { return }
+        Task { @MainActor in self.onStartRequest?(request) }
     }
 
     nonisolated func session(_ session: WCSession, didFinish fileTransfer: WCSessionFileTransfer, error: Error?) {

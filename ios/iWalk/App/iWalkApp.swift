@@ -19,6 +19,7 @@ struct iWalkApp: App {
                 .environment(services.mirror)
                 .environment(services.sync)
                 .environment(services.network)
+                .environment(services.reviewer)
         }
         .modelContainer(services.container)
     }
@@ -37,17 +38,43 @@ final class AppServices {
     let sync: PhoneSync
     let mirror: MirroredWorkout
     let tracking: TrackingSession
+    let reviewer: RouteReviewer
 
     var selectedTab: Tab = .plan
 
     init() {
         container = iWalkSchema.makeContainer()
         sync = PhoneSync(context: container.mainContext)
+        reviewer = RouteReviewer(context: container.mainContext, sync: sync, network: network)
         mirror = MirroredWorkout(health: health, liveActivity: liveActivity)
         tracking = TrackingSession(health: health, context: container.mainContext, liveActivity: liveActivity)
         tracking.mirror = mirror
         mirror.install()
         sync.activate()
+    }
+
+    /// Launches the Watch app into a workout ("Start on Apple Watch"), optionally following a route.
+    /// The Watch records it (so it lands in Fitness with heart rate) and mirrors it back; the phone
+    /// does not record ("one recorder"). Returns nil once the Watch is live, or a message for the user.
+    func startOnWatch(activity: ActivityKind, route: RouteDTO?) async -> String? {
+        sync.requestWatchStart(WatchStartRequest(routeId: route?.id, activity: activity))
+        do {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                health.startWatchApp(with: activity.workoutConfiguration) { success, error in
+                    if success { continuation.resume() } else {
+                        continuation.resume(throwing: error ?? CocoaError(.featureUnsupported))
+                    }
+                }
+            }
+        } catch {
+            return "Couldn't start on the Watch: \(error.localizedDescription). Start on iPhone instead?"
+        }
+        // The mirrored session normally arrives within a few seconds.
+        for _ in 0..<20 {
+            if mirror.isActive { return nil }
+            try? await Task.sleep(for: .seconds(1))
+        }
+        return "No live view from the Watch yet. If it's recording, the walk syncs here when it ends. If not, check the Watch is on your wrist and unlocked, or start on iPhone."
     }
 
     func requestHealthAuthorization() async {
