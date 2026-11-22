@@ -2,6 +2,7 @@ import MapKit
 import SwiftData
 import SwiftUI
 import iWalkCore
+import iWalkStore
 
 struct PlannerView: View {
     @Environment(PlannerModel.self) private var model
@@ -16,12 +17,44 @@ struct PlannerView: View {
     @State private var routeName = ""
     @State private var saveError: String?
     @State private var locationManager = CLLocationManager()
+    @Query(sort: \RouteRecord.updatedAt, order: .reverse) private var savedRoutes: [RouteRecord]
+    @AppStorage("showSavedRoutes") private var showSaved = true
+    @State private var routeToOpen: RouteRecord?
+
+    /// Saved routes other than the one being edited, decoded once per render.
+    private var visibleSaved: [(record: RouteRecord, coords: [CLLocationCoordinate2D])] {
+        guard showSaved else { return [] }
+        return savedRoutes
+            .filter { $0.id != model.editingRoute?.id }
+            .map { ($0, $0.coords.map(\.clCoordinate)) }
+    }
 
     var body: some View {
         @Bindable var model = model
         MapReader { proxy in
             Map(position: $camera) {
                 UserAnnotation()
+                // Saved routes: dashed purple lines with a tappable marker at each start.
+                ForEach(visibleSaved, id: \.record.id) { saved in
+                    MapPolyline(coordinates: saved.coords)
+                        .stroke(.purple.opacity(0.6),
+                                style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round, dash: [8, 6]))
+                    if let start = saved.coords.first {
+                        Annotation(saved.record.name, coordinate: start, anchor: .center) {
+                            Button {
+                                routeToOpen = saved.record
+                            } label: {
+                                Image(systemName: saved.record.activity.systemImage)
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.white)
+                                    .frame(width: 26, height: 26)
+                                    .background(Circle().fill(.purple))
+                                    .overlay(Circle().stroke(.white, lineWidth: 2))
+                            }
+                            .accessibilityLabel("Saved route \(saved.record.name)")
+                        }
+                    }
+                }
                 if let planned = model.planned {
                     MapPolyline(coordinates: planned.coords.map(\.clCoordinate))
                         .stroke(.blue, style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
@@ -84,6 +117,17 @@ struct PlannerView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+        .confirmationDialog(routeToOpen?.name ?? "", isPresented: .constant(routeToOpen != nil),
+                            titleVisibility: .visible, presenting: routeToOpen) { route in
+            Button("Edit in planner") {
+                model.load(route.dto)
+                routeToOpen = nil
+            }
+            Button("Cancel", role: .cancel) { routeToOpen = nil }
+        } message: { route in
+            Text([Format.distance(km: route.distanceKm), Format.minutes(route.durationMin),
+                  route.elevGainM.map { "↑ \(Int($0.rounded())) m" }].compactMap { $0 }.joined(separator: " · "))
+        }
         .alert("Could not save", isPresented: .constant(saveError != nil)) {
             Button("OK") { saveError = nil }
         } message: {
@@ -113,6 +157,7 @@ private struct PlannerPanel: View {
     @Environment(PlannerModel.self) private var model
     @Binding var showingSave: Bool
     @Binding var routeName: String
+    @AppStorage("showSavedRoutes") private var showSaved = true
 
     var body: some View {
         @Bindable var model = model
@@ -126,9 +171,11 @@ private struct PlannerPanel: View {
 
             HStack {
                 Toggle("Loop", isOn: $model.isLoop).fixedSize()
+                Toggle("Saved", isOn: $showSaved).fixedSize()
+                    .accessibilityLabel("Show saved routes")
                 Spacer()
                 if model.isPlanning { ProgressView().controlSize(.small) }
-                Text(model.waypoints.isEmpty ? "Tap the map to add points" : "\(model.waypoints.count) points")
+                Text(model.waypoints.isEmpty ? "Tap map" : "\(model.waypoints.count) pts")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
