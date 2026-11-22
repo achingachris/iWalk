@@ -22,6 +22,12 @@ Run these on real devices (iPhone + paired Apple Watch). Plan every route **onli
 | 7 | Watch workout with the phone nearby → exactly one session in History and one workout in Health/Fitness | [ ] |
 | 8 | Watch workout → the phone shows live stats (mirroring) and the Live Activity says "from Watch" | [ ] |
 | 9 | Walk 30+ m off the planned route for 3 fixes → haptic + "Off route" on phone and Watch; clears when back on | [ ] |
+| 10 | Route → **Start on Apple Watch** (Watch on wrist, unlocked, phone in Airplane mode with Bluetooth on) → the Watch opens into the route's workout, the phone shows it live, and after ending, Fitness shows one walk/hike/run with the route map | [ ] |
+| 11 | Route → **Start on iPhone** (no Watch workout) → on iOS 26+ it runs as a live workout; after Stop → Save, Fitness shows one walk/hike/run with the route map | [ ] |
+| 12 | Start on Apple Watch with the Watch off the wrist or out of range → the phone says so within ~20 s and Start on iPhone still works | [ ] |
+| 13 | Walk a different path for part of a route (300 m+), offline → after the walk, back online, History shows "Different path from the route"; the walked path follows real streets and its distance is close to what you walked | [ ] |
+| 14 | On that walk: **Update** → the saved route changes on the phone and the Watch; **Save as new route** → a "(walked)" route appears; **Keep original** → nothing changes | [ ] |
+| 15 | Planner map shows saved routes as dashed purple lines; tapping a route's marker offers Edit in planner; the "Saved" toggle hides them | [ ] |
 
 ## Routes
 | Route | Activity | What to check | Planned km | Actual km | Within 10%? | Notes |
