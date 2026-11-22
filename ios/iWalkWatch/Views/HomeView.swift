@@ -54,13 +54,25 @@ struct HomeView: View {
                 WorkoutView()
             }
         }
-        .task { await workout.requestAuthorization() }
+        .task {
+            await workout.requestAuthorization()
+            #if DEBUG
+            // Screenshot helper: `-demoRoute "Old Town Heritage Walk"` starts that route's workout
+            // (the Watch simulator can't be tapped from the command line). Debug builds only.
+            if let name = UserDefaults.standard.string(forKey: "demoRoute"),
+               let route = routes.first(where: { $0.name == name })?.dto {
+                await workout.start(activity: route.activity, route: route)
+            }
+            #endif
+        }
     }
 }
 
 struct WorkoutView: View {
     @Environment(WorkoutManager.self) private var workout
-    @State private var page = 1
+    // Debug screenshot helper: `-demoPage 2` opens a given page (0 controls, 1 stats, 2 route).
+    @State private var page = UserDefaults.standard.object(forKey: "demoPage") == nil
+        ? 1 : UserDefaults.standard.integer(forKey: "demoPage")
 
     var body: some View {
         TabView(selection: $page) {
