@@ -35,6 +35,8 @@ final class TrackingSession {
     private var updatesTask: Task<Void, Never>?
     private var heartRateTask: Task<Void, Never>?
     private var geometry: RouteGeometry?
+    /// How far along the route we were at the last on-route fix (progress-aware matching).
+    private var lastAlongM: Double?
     private var detector = OffRouteDetector()
     private var recorder: PhoneWorkoutRecorder?
     private var pendingRouteLocations: [CLLocation] = []
@@ -81,6 +83,7 @@ final class TrackingSession {
         self.route = route
         self.activity = route?.activity ?? activity
         geometry = route.map { RouteGeometry($0.coords) }
+        lastAlongM = route == nil ? nil : 0
         remainingKm = route?.distanceKm
         detector.reset()
         isOffRoute = false
@@ -130,8 +133,9 @@ final class TrackingSession {
         pendingRouteLocations.append(location)
         if pendingRouteLocations.count >= 10 { flushRouteData() }
 
-        if let geometry, let match = geometry.nearest(to: point.coordinate) {
-            remainingKm = max(0, geometry.totalLengthM - match.alongM) / 1000
+        if let geometry, let match = geometry.nearest(to: point.coordinate, after: lastAlongM) {
+            if match.distanceM <= detector.thresholdM { lastAlongM = match.alongM }
+            remainingKm = max(0, geometry.totalLengthM - (lastAlongM ?? match.alongM)) / 1000
             switch detector.update(distanceM: match.distanceM) {
             case .wentOffRoute:
                 isOffRoute = true

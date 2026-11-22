@@ -112,7 +112,25 @@ public struct RouteGeometry: Sendable {
         public let alongM: Double
     }
 
+    /// Progress-aware match for live tracking. Loops and out-and-back routes pass the same street
+    /// twice, so the plain nearest point can jump to the wrong pass (for example "382 m remaining"
+    /// at the start of a 3 km loop). Prefer the part of the route just ahead of `previousAlongM`,
+    /// and fall back to the whole route only when that part is clearly not where we are.
+    public func nearest(to p: Coordinate, after previousAlongM: Double?,
+                        lookBehindM: Double = 100, lookAheadM: Double = 800) -> Match? {
+        guard let previousAlongM else { return nearest(to: p) }
+        let window = (previousAlongM - lookBehindM)...(previousAlongM + lookAheadM)
+        if let local = nearest(to: p, within: window), local.distanceM <= 60 {
+            return local
+        }
+        return nearest(to: p)
+    }
+
     public func nearest(to p: Coordinate) -> Match? {
+        nearest(to: p, within: nil)
+    }
+
+    private func nearest(to p: Coordinate, within window: ClosedRange<Double>?) -> Match? {
         guard let first = coords.first else { return nil }
         if coords.count == 1 {
             return Match(distanceM: Geo.distance(p, first), alongM: 0)
@@ -126,9 +144,15 @@ public struct RouteGeometry: Sendable {
 
         var best = Double.greatestFiniteMagnitude
         var bestAlong = 0.0
+        var found = false
         var a = project(coords[0])
         for i in 1..<coords.count {
             let b = project(coords[i])
+            if let window, cumulative[i] < window.lowerBound || cumulative[i - 1] > window.upperBound {
+                a = b
+                continue
+            }
+            found = true
             let dx = b.x - a.x, dy = b.y - a.y
             let len2 = dx * dx + dy * dy
             // The query point is the origin, so t is the projection of -a onto the segment.
@@ -141,6 +165,6 @@ public struct RouteGeometry: Sendable {
             }
             a = b
         }
-        return Match(distanceM: best, alongM: bestAlong)
+        return found ? Match(distanceM: best, alongM: bestAlong) : nil
     }
 }

@@ -40,7 +40,6 @@ struct RootView: View {
         .task { await services.requestHealthAuthorization() }
         // Check walks against their routes on launch, when a new walk arrives, and when back online.
         .task(id: ReviewTrigger(unreviewed: unreviewed.count, online: network.isOnline)) {
-            guard !unreviewed.isEmpty else { return }
             await reviewer.reviewPending()
         }
         .onChange(of: scenePhase) { _, phase in

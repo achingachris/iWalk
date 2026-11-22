@@ -37,6 +37,8 @@ final class WorkoutManager: NSObject {
     private(set) var builder: HKLiveWorkoutBuilder?
     private var routeBuilder: HKWorkoutRouteBuilder?
     private var geometry: RouteGeometry?
+    /// How far along the route we were at the last on-route fix (progress-aware matching).
+    private var lastAlongM: Double?
     private var detector = OffRouteDetector()
     private var lastMirrorSend = Date.distantPast
 
@@ -65,6 +67,7 @@ final class WorkoutManager: NSObject {
         self.route = route
         self.activity = route?.activity ?? activity
         geometry = route.map { RouteGeometry($0.coords) }
+        lastAlongM = route == nil ? nil : 0
         remainingKm = route?.distanceKm
         detector.reset()
         isOffRoute = false
@@ -92,6 +95,13 @@ final class WorkoutManager: NSObject {
             try await builder.beginCollection(at: start)
             phase = .running
             locationManager.startUpdatingLocation()
+            // The iPhone's "follow this route" request can arrive while the workout is still
+            // starting (after startFromPhone read it, before we were running). Apply it now.
+            if self.route == nil, let request = pendingStart, request.isFresh, request.activity == self.activity,
+               let id = request.routeId, let found = routeLookup?(id) {
+                follow(found)
+            }
+            pendingStart = nil
 
             // Live stats on the iPhone when it is in range. Recording does not depend on it.
             do {
@@ -134,6 +144,7 @@ final class WorkoutManager: NSObject {
     private func follow(_ route: RouteDTO) {
         self.route = route
         geometry = RouteGeometry(route.coords)
+        lastAlongM = nil   // joined mid-workout: we don't know how far along we are yet
         remainingKm = route.distanceKm
         detector.reset()
         isOffRoute = false
@@ -185,8 +196,9 @@ final class WorkoutManager: NSObject {
         }
 
         var changed = false
-        if let geometry, let match = geometry.nearest(to: point) {
-            remainingKm = max(0, geometry.totalLengthM - match.alongM) / 1000
+        if let geometry, let match = geometry.nearest(to: point, after: lastAlongM) {
+            if match.distanceM <= detector.thresholdM { lastAlongM = match.alongM }
+            remainingKm = max(0, geometry.totalLengthM - (lastAlongM ?? match.alongM)) / 1000
             switch detector.update(distanceM: match.distanceM) {
             case .wentOffRoute:
                 isOffRoute = true

@@ -42,11 +42,18 @@ final class RouteReviewer {
             sortBy: [SortDescriptor(\.start)]
         ))) ?? []
 
-        var createdRoutes = false
+        var routesChanged = relinkDuplicateRoutes()
         for session in unchecked {
-            guard session.routeId != nil else {
-                if await createRoute(from: session) { createdRoutes = true }
-                continue
+            if session.routeId == nil {
+                // A walk started without a route: if it mostly followed a saved route, treat it
+                // as a walk of that route (and review the differences) rather than a new route.
+                if let match = bestMatchingRoute(for: session.trackPoints.map(\.coordinate)) {
+                    session.routeId = match.id
+                    session.routeName = match.name
+                } else {
+                    if await createRoute(from: session) { routesChanged = true }
+                    continue
+                }
             }
             guard let routeId = session.routeId,
                   let route = try? context.fetch(FetchDescriptor<RouteRecord>(
@@ -77,7 +84,55 @@ final class RouteReviewer {
             }
         }
         try? context.save()
-        if createdRoutes { sync.routesChanged() }   // new routes go to the Watch too
+        if routesChanged { sync.routesChanged() }   // new routes go to the Watch too
+    }
+
+    /// The saved route a track mostly followed: at least half of the walk within 40 m of it.
+    /// Picks the closest fit when several qualify.
+    private func bestMatchingRoute(for track: [Coordinate], excluding excluded: UUID? = nil) -> RouteRecord? {
+        guard Geo.length(of: track) >= Self.minimumNewRouteM,
+              let routes = try? context.fetch(FetchDescriptor<RouteRecord>()) else { return nil }
+        var best: (route: RouteRecord, onRoute: Double)?
+        for route in routes where route.id != excluded {
+            let coords = route.coords
+            guard coords.count > 1 else { continue }
+            let result = RouteComparison.compare(track: track, planned: RouteGeometry(coords))
+            guard result.trackM > 0 else { continue }
+            let onRoute = 1 - result.offRouteM / result.trackM
+            if onRoute >= 0.5, onRoute > (best?.onRoute ?? 0) { best = (route, onRoute) }
+        }
+        return best?.route
+    }
+
+    /// Repairs walks that were saved as a new route although they mostly followed an existing
+    /// one (for example a Watch workout that started before its route arrived). The duplicate is
+    /// removed only if it hasn't been touched since it was created; the walk is linked to the
+    /// original route and its path is offered as an update (Update / Save as new / Keep).
+    private func relinkDuplicateRoutes() -> Bool {
+        let created = (try? context.fetch(FetchDescriptor<SessionRecord>(
+            predicate: #Predicate { $0.routeReviewRaw == "created" }))) ?? []
+        var changed = false
+        for session in created {
+            guard let id = session.routeId,
+                  let duplicate = try? context.fetch(FetchDescriptor<RouteRecord>(
+                      predicate: #Predicate { $0.id == id })).first,
+                  duplicate.updatedAt <= session.end.addingTimeInterval(15 * 60),
+                  let original = bestMatchingRoute(for: session.trackPoints.map(\.coordinate), excluding: id)
+            else { continue }
+            var proposal = duplicate.dto          // already snapped to OSM paths, with elevation
+            proposal.id = original.id
+            proposal.name = original.name
+            proposal.activity = original.activity
+            session.routeProposal = proposal
+            session.routeId = original.id
+            session.routeName = original.name
+            let walked = RouteComparison.compare(track: session.trackPoints.map(\.coordinate),
+                                                 planned: RouteGeometry(original.coords))
+            session.routeReview = walked.differs ? .pending : .matched
+            context.delete(duplicate)
+            changed = true
+        }
+        return changed
     }
 
     /// Saves a walk that had no planned route as a new route: the track snapped to OSM paths,
