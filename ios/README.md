@@ -15,7 +15,7 @@ The Xcode project is generated from `project.yml` with [XcodeGen](https://github
    ```bash
    xcodegen generate && open iWalk.xcodeproj
    ```
-4. Run the `iWalk` scheme on your iPhone. Xcode installs the Watch app with it. Keep the phone cabled and the Watch on the same Wi-Fi.
+4. Sign in to Xcode (**Settings → Accounts**), pair your iPhone and Apple Watch in **Device Hub** (**Xcode → Open Developer Tool → Device Hub**), then run the `iWalk` scheme on your iPhone. Xcode installs the Watch app with it.
 
 Free-account notes: don't change `BUNDLE_PREFIX` once set (10 App IDs per 7 days), and re-run from Xcode every 7 days.
 
@@ -33,5 +33,5 @@ xcodebuild -project iWalk.xcodeproj -scheme iWalk -destination 'platform=iOS Sim
 ```
 
 ## Notes
-- On iPhone, `HKLiveWorkoutBuilder` / `associatedWorkoutBuilder()` need iOS 26. iWalk targets iOS 18, so the Watch sends live stats to the phone itself (`MirrorUpdate` over `sendToRemoteWorkoutSession`).
+- On iPhone, `HKLiveWorkoutBuilder` / `associatedWorkoutBuilder()` need iOS 26. iWalk targets iOS 18, so the Watch sends live stats to the phone itself (`MirrorUpdate` over `sendToRemoteWorkoutSession`). Phone-only workouts use a live `HKWorkoutSession` on iOS 26 and later, and `HKWorkoutBuilder` before that.
 - Apple has no walking directions in Mombasa. The Apple fallback planner only helps where Apple has coverage; plan with the Valhalla server.
